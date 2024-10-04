@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fs;
 use std::cmp;
-use regex::{RegexBuilder};
+use regex::RegexBuilder;
 
 pub mod cli;
 
@@ -42,6 +42,10 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             last = i + 1;
             after_num = after;
         }
+    }
+
+    if cli.count {
+        println!("{count}");
     }
 
     Ok(())
