@@ -6,15 +6,12 @@ use clap::Parser;
 #[clap(disable_help_flag = true)]
 pub struct Cli {
     #[clap(short='A', long, default_value = "0")]
-    #[arg(group = "extra_lines")]
     pub after: usize,
 
     #[clap(short='B', long, default_value = "0")]
-    #[arg(group = "extra_lines")]
     pub before: usize,
 
     #[clap(short='C', long, default_value = "0")]
-    #[arg(group = "extra_lines")]
     pub context: usize,
 
     #[clap(short, long)]
