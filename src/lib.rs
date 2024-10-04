@@ -52,8 +52,12 @@ fn extract_lines<'a>(lines: &'a [&'a str], cli: &Cli) -> (usize, Vec<&'a str>) {
         let is_match = re.is_match(line);
 
         if (is_match && !cli.invert) || (!is_match && cli.invert) {
-            scanline[cmp::max(0, i - before)] += 1;
-            scanline[cmp::min(lines.len() - 1, i + after)] -= 1;
+            let left = cmp::max(0, i - before);
+            scanline[left] += 1;
+            let right = i + after + 1;
+            if right < lines.len() {
+                scanline[right] -= 1;
+            }
             count += 1;
         }
     }
@@ -63,7 +67,7 @@ fn extract_lines<'a>(lines: &'a [&'a str], cli: &Cli) -> (usize, Vec<&'a str>) {
 
     for (i, line) in lines.iter().enumerate() {
         scan += scanline[i];
-        if scan > 0 || (scanline[i] == -1 && scan == 0){
+        if scan > 0 {
             result_lines.push(*line); // Деструктурируем ссылку для правильного добавления
         }
     }
@@ -73,8 +77,6 @@ fn extract_lines<'a>(lines: &'a [&'a str], cli: &Cli) -> (usize, Vec<&'a str>) {
 
 #[cfg(test)]
 mod tests {
-    use std::default;
-
     use super::*;
 
     fn lines() -> [&'static str; 18] {
@@ -146,5 +148,42 @@ mod tests {
 
         assert_eq!(matched_lines_num, 5);
         assert_eq!(extracted_lines, expected_lines());
+    }
+
+    #[test]
+    fn test_extract_lines() {
+        let lines = lines();
+        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
+            pattern: "df".to_string(),
+            ..Default::default()
+        });
+        assert_eq!(matched_lines_num, 5);
+        assert_eq!(extracted_lines, ["df", "df", "dfs", "df", "df"]);
+    }
+
+    #[test]
+    fn test_extract_lines_invert() {
+        let lines = lines();
+        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
+            pattern: "df".to_string(),
+            invert: true,
+            ..Default::default()
+        });
+        assert_eq!(matched_lines_num, 13);
+        assert_eq!(extracted_lines, [
+            "Rust:",
+            "safe, fast,  productive.",
+            "dsf",
+            "Pick three.",
+            "2 b",
+            "-1 a",
+            "tret",
+            "rt",
+            "r",
+            "et",
+            "wer",
+            "rt",
+            "eret",
+        ]);
     }
 }
