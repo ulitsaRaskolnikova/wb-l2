@@ -3,7 +3,7 @@ use clap::Parser;
 
 mod cli;
 
-use wb_l2::cli::Cli;
+use wb_l2::Cli;
 
 fn main() {
     let cli = Cli::parse();

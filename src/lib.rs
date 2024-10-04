@@ -1,58 +1,62 @@
 use std::error::Error;
 use std::fs;
-use std::collections::HashMap;
+use std::cmp;
+use regex::{RegexBuilder};
 
-mod sort;
 pub mod cli;
 
-use sort::*;
-use crate::cli::Cli;
+pub use crate::cli::Cli;
 
 pub fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     let contents = fs::read_to_string(&cli.file_path)?;
-    let mut lines: Vec<&str> = contents.lines().collect();
-    let mut leading_blanks_string: HashMap<String, String> = HashMap::new();
-    let old_lines = lines.clone();
+    let lines: Vec<&str> = contents.lines().collect();
+    let pattern = if cli.fixed {
+        &format!(r"^{}$", regex::escape(&cli.pattern))
+    } else {
+        &cli.pattern
+    };
+    let re = RegexBuilder::new(&pattern)
+        .case_insensitive(cli.ignore_case)
+        .build()
+        .unwrap();
 
-    if cli.key <= 0 {
-        return Err("key must be greater than 0".into());
-    }
-    
-    if cli.ignore_leading_blanks {
-        lines.iter_mut().for_each(|x| {
-            let old = x.to_string();
-            *x = x.trim();
-            leading_blanks_string.insert(x.to_string(), old.to_string());
-        });
-    }
-    
-    sort(&mut lines, &cli);
+    let before = cmp::max(cli.before, cli.context);
+    let after = cmp::max(cli.after, cli.context);
 
+    let mut last = 0;
+    let mut after_num = 0;
 
-    if cli.reverse {
-        lines.reverse();
-    }
+    let mut count = 0;
 
-    if cli.unique {
-        lines.dedup();
-    }
-
-    if cli.ignore_leading_blanks {
-        lines.iter_mut().for_each(|x| {
-            *x = leading_blanks_string.get(&x.to_string()).unwrap();
-        })
-    }
-
-    if cli.check {
-        if old_lines != lines {
-            println!("{:?} not equal to \n{:?}", old_lines, lines);
+    for (i, line) in lines.iter().enumerate() {
+        if after_num > 0 {
+            after_num -= 1;
+            handle_output(i, line, &mut count, &cli);
+            continue;
         }
-        return Ok(());
-    }
-
-    for line in lines {
-        println!("{line}");
+        let is_match = re.is_match(line);
+        if (is_match && !cli.invert) || (!is_match && cli.invert) {
+            for j in cmp::max(last, i - before)..i + 1 {
+                handle_output(i, lines[j], &mut count, &cli);
+            }
+            last = i + 1;
+            after_num = after;
+        }
     }
 
     Ok(())
+}
+
+fn handle_output(index: usize, line: &str, count: &mut usize, cli: &Cli) {
+    *count += 1;
+
+    if cli.count {
+        return;
+    }
+
+    if cli.line_num {
+        println!("{} {}", index + 1, line);
+    } else {
+        println!("{line}");
+    }
 }
