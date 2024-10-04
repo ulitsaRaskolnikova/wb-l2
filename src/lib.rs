@@ -1,6 +1,4 @@
-use std::error::Error;
-use std::fs;
-use std::cmp;
+use std::{error::Error, fs, cmp};
 use regex::RegexBuilder;
 
 pub mod cli;
@@ -18,7 +16,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    for (i, line) in extracted_lines.iter().enumerate() {
+    for (i, line) in extracted_lines.into_iter() {
         if cli.line_num {
             println!("{} {}", i + 1, line);
         } else {
@@ -29,7 +27,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn extract_lines<'a>(lines: &'a [&'a str], cli: &Cli) -> (usize, Vec<&'a str>) {
+fn extract_lines<'a>(lines: &'a [&'a str], cli: &Cli) -> (usize, Vec<(usize, &'a str)>) {
     let mut scanline: Vec<isize> = vec![0; lines.len()];
 
     let pattern = if cli.fixed {
@@ -63,16 +61,16 @@ fn extract_lines<'a>(lines: &'a [&'a str], cli: &Cli) -> (usize, Vec<&'a str>) {
     }
 
     let mut scan = 0;
-    let mut result_lines = Vec::new();
+    let mut result_lines: Vec<(usize, &str)> = Vec::new();
 
     for (i, line) in lines.iter().enumerate() {
         scan += scanline[i];
         if scan > 0 {
-            result_lines.push(*line); // Деструктурируем ссылку для правильного добавления
+            result_lines.push((i, *line)); // Деструктурируем ссылку для правильного добавления
         }
     }
 
-    (count,result_lines)
+    (count, result_lines)
 }
 
 #[cfg(test)]
@@ -131,6 +129,8 @@ mod tests {
             context: 2,
             ..Default::default()
         });
+        
+        let extracted_lines = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
 
         assert_eq!(matched_lines_num, 5);
         assert_eq!(extracted_lines, expected_lines());
@@ -146,6 +146,8 @@ mod tests {
             ..Default::default()
         });
 
+        let extracted_lines = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
+
         assert_eq!(matched_lines_num, 5);
         assert_eq!(extracted_lines, expected_lines());
     }
@@ -157,6 +159,9 @@ mod tests {
             pattern: "df".to_string(),
             ..Default::default()
         });
+
+        let extracted_lines = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
+
         assert_eq!(matched_lines_num, 5);
         assert_eq!(extracted_lines, ["df", "df", "dfs", "df", "df"]);
     }
@@ -169,6 +174,9 @@ mod tests {
             invert: true,
             ..Default::default()
         });
+
+        let extracted_lines: Vec<&str> = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
+
         assert_eq!(matched_lines_num, 13);
         assert_eq!(extracted_lines, [
             "Rust:",
@@ -184,6 +192,45 @@ mod tests {
             "wer",
             "rt",
             "eret",
+        ]);
+    }
+
+    #[test]
+    fn test_extract_lines_num() {
+        let lines = lines();
+        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
+            pattern: "df".to_string(),
+            line_num: true,
+            ..Default::default()
+        });
+        
+        assert_eq!(matched_lines_num, 5);
+        assert_eq!(extracted_lines, [
+            (3, "df"),
+            (4, "df"),
+            (5, "dfs"),
+            (11, "df"),
+            (15, "df"),
+        ]);
+    }
+
+    #[test]
+    fn test_extract_lines_num_fixed() {
+        let lines = lines();
+        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
+            pattern: "df".to_string(),
+            fixed: true,
+            ..Default::default()
+        });
+
+        let extracted_lines: Vec<&str> = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
+        
+        assert_eq!(matched_lines_num, 4);
+        assert_eq!(extracted_lines, [
+            "df",
+            "df",
+            "df",
+            "df",
         ]);
     }
 }
