@@ -233,4 +233,25 @@ mod tests {
             "df",
         ]);
     }
+
+    #[test]
+    fn test_extract_lines_num_fixed_ignore_case() {
+        let lines = lines();
+        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
+            pattern: "DF".to_string(),
+            ignore_case: true,
+            fixed: true,
+            ..Default::default()
+        });
+
+        let extracted_lines: Vec<&str> = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
+        
+        assert_eq!(matched_lines_num, 4);
+        assert_eq!(extracted_lines, [
+            "df",
+            "df",
+            "df",
+            "df",
+        ]);
+    }
 }
