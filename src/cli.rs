@@ -3,7 +3,6 @@ use clap::Parser;
 
 
 #[derive(Parser, Debug)]
-#[clap(disable_help_flag = true)]
 pub struct Cli {
     #[clap(short='A', long, default_value = "0")]
     pub after: usize,
