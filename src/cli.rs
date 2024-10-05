@@ -3,34 +3,15 @@ use clap::Parser;
 
 
 #[derive(Parser, Debug)]
-#[clap(disable_help_flag = true)]
 pub struct Cli {
-    #[clap(short='A', long, default_value = "0")]
-    pub after: usize,
-
-    #[clap(short='B', long, default_value = "0")]
-    pub before: usize,
-
-    #[clap(short='C', long, default_value = "0")]
-    pub context: usize,
+    #[clap(short, long, default_value = "\t")]
+    pub delimiter: char,
 
     #[clap(short, long)]
-    pub count: bool,
-    
-    #[clap(short, long)]
-    pub ignore_case: bool,
+    pub separated: bool,
 
-    #[clap(short='v', long)]
-    pub invert: bool,
-
-    #[clap(short='F', long)]
-    pub fixed: bool,
-
-    #[clap(short='n', long)]
-    pub line_num: bool,
-
-    #[clap(required = true)]
-    pub pattern: String,
+    #[clap(short, long, required = true, value_delimiter = ',')]
+    pub fields: Vec<usize>,
 
     #[clap(required = true)]
     pub file_path: String,
@@ -39,15 +20,9 @@ pub struct Cli {
 impl Default for Cli {
     fn default() -> Self {
         Self {
-            after: 0,
-            before: 0,
-            context: 0,
-            count: false,
-            ignore_case: false,
-            invert: false,
-            fixed: false,
-            line_num: false,
-            pattern: String::new(),
+            fields: Vec::new(),
+            delimiter: '\t',
+            separated: false,
             file_path: String::new(),
         }
     }

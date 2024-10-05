@@ -1,5 +1,4 @@
-use std::{error::Error, fs, cmp};
-use regex::RegexBuilder;
+use std::{error::Error, fs};
 
 pub mod cli;
 
@@ -7,251 +6,105 @@ pub use crate::cli::Cli;
 
 pub fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     let contents = fs::read_to_string(&cli.file_path)?;
-    let lines: Vec<&str> = contents.lines().collect();
 
-    let (matched_lines_num, extracted_lines) = extract_lines(&lines, &cli);
+    let cut_contents = cut_by_delimiter(&contents, &cli);
 
-    if cli.count {
-        println!("{matched_lines_num}");
-        return Ok(());
+    for line in cut_contents {
+        println!("{line}");
     }
-
-    for (i, line) in extracted_lines.into_iter() {
-        if cli.line_num {
-            println!("{} {}", i + 1, line);
-        } else {
-            println!("{line}");
-        }
-    }
-
+ 
     Ok(())
 }
 
-fn extract_lines<'a>(lines: &'a [&'a str], cli: &Cli) -> (usize, Vec<(usize, &'a str)>) {
-    let mut scanline: Vec<isize> = vec![0; lines.len()];
+fn cut_by_delimiter(contents: &str, cli: &Cli) -> Vec<String> {
+    let mut result = Vec::new();
 
-    let pattern = if cli.fixed {
-        format!(r"^{}$", regex::escape(&cli.pattern))
-    } else {
-        cli.pattern.clone()
-    };
-    
-    let re = RegexBuilder::new(&pattern)
-        .case_insensitive(cli.ignore_case)
-        .build()
-        .unwrap();
+    for line in contents.lines() {
+        let separated_line: Vec<&str> = line.split(cli.delimiter).collect();
+        let mut no_field = true;
 
-    let before = cmp::max(cli.before, cli.context);
-    let after = cmp::max(cli.after, cli.context);
+        let mut cut_line = String::new();
 
-    let mut count = 0;
-
-    for (i, line) in lines.iter().enumerate() {
-        let is_match = re.is_match(line);
-
-        if (is_match && !cli.invert) || (!is_match && cli.invert) {
-            let left = cmp::max(0, i - before);
-            scanline[left] += 1;
-            let right = i + after + 1;
-            if right < lines.len() {
-                scanline[right] -= 1;
+        for field in &cli.fields {
+            let field = *field - 1;
+            if field < separated_line.len() {
+                cut_line.push_str(separated_line[field]);
+                if field < separated_line.len() - 1 {
+                    cut_line.push(cli.delimiter);
+                }
+                no_field = false;
             }
-            count += 1;
         }
+
+        if no_field {
+            if cli.separated {
+                continue;
+            }
+            cut_line = line.to_string();
+        } 
+
+        result.push(cut_line);
     }
-
-    let mut scan = 0;
-    let mut result_lines: Vec<(usize, &str)> = Vec::new();
-
-    for (i, line) in lines.iter().enumerate() {
-        scan += scanline[i];
-        if scan > 0 {
-            result_lines.push((i, *line)); // Деструктурируем ссылку для правильного добавления
-        }
-    }
-
-    (count, result_lines)
+    
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn lines() -> [&'static str; 18] {
-        [
-            "Rust:",
-            "safe, fast,  productive.",
-            "dsf",
-            "df",
-            "df",
-            "dfs",
-            "Pick three.",
-            "2 b",
-            "-1 a",
-            "tret",
-            "rt",
-            "df",
-            "r",
-            "et",
-            "wer",
-            "df",
-            "rt",
-            "eret",
-        ]
-    }
-
-    fn expected_lines() -> [&'static str; 16] {
-        [
-            "safe, fast,  productive.", 
-            "dsf", 
-            "df", 
-            "df", 
-            "dfs", 
-            "Pick three.", 
-            "2 b",
-            "tret", 
-            "rt", 
-            "df", 
-            "r", 
-            "et", 
-            "wer", 
-            "df", 
-            "rt", 
-            "eret"
-        ]
+    #[test]
+    fn test_cut_by_delimiter_default() {
+        let contents = "a\tb\tc\n1\t2\t3";
+        let cli = Cli::default();
+        let expected = vec!["a\tb\tc", "1\t2\t3"];
+        assert_eq!(cut_by_delimiter(contents, &cli), expected);
     }
 
     #[test]
-    fn test_extract_lines_with_context() {
-        let lines = lines();
-        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
-            pattern: "df".to_string(),
-            context: 2,
+    fn test_cut_by_delimiter_separated() {
+        let contents = "a\tb\tc\n1\t2\t3";
+        let cli = Cli {
+            separated: true,
             ..Default::default()
-        });
-        
-        let extracted_lines = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
-
-        assert_eq!(matched_lines_num, 5);
-        assert_eq!(extracted_lines, expected_lines());
+        };
+        let expected: Vec<String> = Vec::new();
+        assert_eq!(cut_by_delimiter(contents, &cli), expected);
     }
 
     #[test]
-    fn test_extract_lines_with_context_and_ignore_case() {
-        let lines = lines();
-        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
-            pattern: "DF".to_string(),
-            context: 2,
-            ignore_case: true,
+    fn test_cut_by_delimiter_fields() {
+        let contents = "a\tb\tc\n1\t2\nflex";
+        let cli = Cli {
+            fields: vec![2, 3],
             ..Default::default()
-        });
-
-        let extracted_lines = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
-
-        assert_eq!(matched_lines_num, 5);
-        assert_eq!(extracted_lines, expected_lines());
+        };
+        let expected = vec!["b\tc", "2", "flex"];
+        assert_eq!(cut_by_delimiter(contents, &cli), expected);
     }
 
     #[test]
-    fn test_extract_lines() {
-        let lines = lines();
-        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
-            pattern: "df".to_string(),
+    fn test_cut_by_delimiter_fields_separated() {
+        let contents = "a\tb\tc\n1";
+        let cli = Cli {
+            fields: vec![2, 3],
+            separated: true,
             ..Default::default()
-        });
-
-        let extracted_lines = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
-
-        assert_eq!(matched_lines_num, 5);
-        assert_eq!(extracted_lines, ["df", "df", "dfs", "df", "df"]);
+        };
+        let expected = vec!["b\tc"];
+        assert_eq!(cut_by_delimiter(contents, &cli), expected);
     }
 
+    
     #[test]
-    fn test_extract_lines_invert() {
-        let lines = lines();
-        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
-            pattern: "df".to_string(),
-            invert: true,
+    fn test_cut_by_delimiter_comma() {
+        let contents = "a,b,c\n1,2,3";
+        let cli = Cli {
+            fields: vec![2, 3],
+            delimiter: ',',
             ..Default::default()
-        });
-
-        let extracted_lines: Vec<&str> = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
-
-        assert_eq!(matched_lines_num, 13);
-        assert_eq!(extracted_lines, [
-            "Rust:",
-            "safe, fast,  productive.",
-            "dsf",
-            "Pick three.",
-            "2 b",
-            "-1 a",
-            "tret",
-            "rt",
-            "r",
-            "et",
-            "wer",
-            "rt",
-            "eret",
-        ]);
-    }
-
-    #[test]
-    fn test_extract_lines_num() {
-        let lines = lines();
-        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
-            pattern: "df".to_string(),
-            line_num: true,
-            ..Default::default()
-        });
-        
-        assert_eq!(matched_lines_num, 5);
-        assert_eq!(extracted_lines, [
-            (3, "df"),
-            (4, "df"),
-            (5, "dfs"),
-            (11, "df"),
-            (15, "df"),
-        ]);
-    }
-
-    #[test]
-    fn test_extract_lines_num_fixed() {
-        let lines = lines();
-        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
-            pattern: "df".to_string(),
-            fixed: true,
-            ..Default::default()
-        });
-
-        let extracted_lines: Vec<&str> = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
-        
-        assert_eq!(matched_lines_num, 4);
-        assert_eq!(extracted_lines, [
-            "df",
-            "df",
-            "df",
-            "df",
-        ]);
-    }
-
-    #[test]
-    fn test_extract_lines_num_fixed_ignore_case() {
-        let lines = lines();
-        let (matched_lines_num, extracted_lines) = extract_lines(&lines, &Cli{
-            pattern: "DF".to_string(),
-            ignore_case: true,
-            fixed: true,
-            ..Default::default()
-        });
-
-        let extracted_lines: Vec<&str> = extracted_lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>();
-        
-        assert_eq!(matched_lines_num, 4);
-        assert_eq!(extracted_lines, [
-            "df",
-            "df",
-            "df",
-            "df",
-        ]);
+        };
+        let expected = vec!["b,c", "2,3"];
+        assert_eq!(cut_by_delimiter(contents, &cli), expected);
     }
 }
