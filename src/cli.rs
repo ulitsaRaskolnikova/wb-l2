@@ -4,14 +4,8 @@ use clap::Parser;
 
 #[derive(Parser, Debug)]
 pub struct Cli {
-    #[clap(short, long, default_value = "\t")]
-    pub delimiter: char,
-
-    #[clap(short, long)]
-    pub separated: bool,
-
-    #[clap(short, long, required = true, value_delimiter = ',')]
-    pub fields: Vec<usize>,
+    #[clap(short, long, default_value = "1")]
+    pub threads: usize,
 
     #[clap(required = true)]
     pub file_path: String,
@@ -20,9 +14,7 @@ pub struct Cli {
 impl Default for Cli {
     fn default() -> Self {
         Self {
-            fields: Vec::new(),
-            delimiter: '\t',
-            separated: false,
+            threads: 1,
             file_path: String::new(),
         }
     }

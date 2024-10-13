@@ -1,52 +1,63 @@
-use std::{error::Error, fs};
+use std::{error::Error, fs, thread, sync::{Arc, Mutex}, time::Instant};
 
 pub mod cli;
-
 pub use crate::cli::Cli;
 
+const LETTER_A: u8 = 'a' as u8;
+
 pub fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
+    let now = Instant::now();
+
     let contents = fs::read_to_string(&cli.file_path)?;
 
-    let cut_contents = cut_by_delimiter(&contents, &cli);
+    let letters: Arc<Mutex<[usize; 26]>> = Arc::new(Mutex::new([0; 26]));
+    let block = contents.len() / cli.threads;
 
-    for line in cut_contents {
-        println!("{line}");
+    let mut handles = Vec::new();
+    let contents_arc = Arc::new(contents); // Оборачиваем contents в Arc для безопасного доступа
+
+    for i in 0..cli.threads {
+        let left = i * block;
+        let right = if i == cli.threads - 1 { contents_arc.len() } else { (i + 1) * block };
+
+        let letters = Arc::clone(&letters);
+        let contents = Arc::clone(&contents_arc); // Создаем клон содержимого для каждого потока
+
+        let handle = thread::spawn(move || {
+            let mut letters = letters.lock().unwrap();
+            letter_frequency(&contents[left..right], &mut letters);
+        });
+
+        handles.push(handle);
     }
- 
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let elapsed = now.elapsed().as_micros();
+
+    println!("{}", letter_frequency_to_json(&letters.lock().unwrap(), elapsed));
+
     Ok(())
 }
 
-fn cut_by_delimiter(contents: &str, cli: &Cli) -> Vec<String> {
-    let mut result = Vec::new();
+fn letter_frequency(contents: &str, letters: &mut [usize; 26]) {
+    contents
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .for_each(|letter| letters[(letter as u8 - LETTER_A) as usize] += 1);
+}
 
-    for line in contents.lines() {
-        let separated_line: Vec<&str> = line.split(cli.delimiter).collect();
-        let mut no_field = true;
-
-        let mut cut_line = String::new();
-
-        for field in &cli.fields {
-            let field = *field - 1;
-            if field < separated_line.len() {
-                cut_line.push_str(separated_line[field]);
-                if field < separated_line.len() - 1 {
-                    cut_line.push(cli.delimiter);
-                }
-                no_field = false;
-            }
-        }
-
-        if no_field {
-            if cli.separated {
-                continue;
-            }
-            cut_line = line.to_string();
-        } 
-
-        result.push(cut_line);
-    }
-    
-    result
+fn letter_frequency_to_json(&letters: &[usize; 26], elapsed: u128) -> String {
+    format!("{{\n\t\"elapsed\": \"{elapsed} ms\",\n\t\"result\": {{\n{}\t}} \n}}\n",
+        letters.iter()
+            .enumerate()
+            .map(|(letter, frequency)| 
+                format!("\t\t\"{}\": {}{}\n", (letter as u8 + LETTER_A) as char, frequency, 
+                (if (letter as u8 + LETTER_A) as char != 'z' {","} else {""}).to_string()))
+            .collect::<String>())
 }
 
 #[cfg(test)]
@@ -54,57 +65,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cut_by_delimiter_default() {
-        let contents = "a\tb\tc\n1\t2\t3";
-        let cli = Cli::default();
-        let expected = vec!["a\tb\tc", "1\t2\t3"];
-        assert_eq!(cut_by_delimiter(contents, &cli), expected);
-    }
-
-    #[test]
-    fn test_cut_by_delimiter_separated() {
-        let contents = "a\tb\tc\n1\t2\t3";
-        let cli = Cli {
-            separated: true,
-            ..Default::default()
-        };
-        let expected: Vec<String> = Vec::new();
-        assert_eq!(cut_by_delimiter(contents, &cli), expected);
-    }
-
-    #[test]
-    fn test_cut_by_delimiter_fields() {
-        let contents = "a\tb\tc\n1\t2\nflex";
-        let cli = Cli {
-            fields: vec![2, 3],
-            ..Default::default()
-        };
-        let expected = vec!["b\tc", "2", "flex"];
-        assert_eq!(cut_by_delimiter(contents, &cli), expected);
-    }
-
-    #[test]
-    fn test_cut_by_delimiter_fields_separated() {
-        let contents = "a\tb\tc\n1";
-        let cli = Cli {
-            fields: vec![2, 3],
-            separated: true,
-            ..Default::default()
-        };
-        let expected = vec!["b\tc"];
-        assert_eq!(cut_by_delimiter(contents, &cli), expected);
-    }
-
-    
-    #[test]
-    fn test_cut_by_delimiter_comma() {
-        let contents = "a,b,c\n1,2,3";
-        let cli = Cli {
-            fields: vec![2, 3],
-            delimiter: ',',
-            ..Default::default()
-        };
-        let expected = vec!["b,c", "2,3"];
-        assert_eq!(cut_by_delimiter(contents, &cli), expected);
+    fn test_letter_frequency() {
+        let contents = "aAaAa1234   bBBB";
+        let mut letters = [0; 26];
+        letter_frequency(contents, &mut letters);
+        assert_eq!(letters, [5, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 }
