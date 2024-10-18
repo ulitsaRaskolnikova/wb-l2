@@ -25,6 +25,7 @@ impl FromStr for ExecutingMode {
     }
 }
 
+// if you want to execute command in fork or exec mode type exec or fork before it like 'exec <command>'
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         print!("> ");
