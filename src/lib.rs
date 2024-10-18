@@ -1,74 +1,101 @@
-use std::{error::Error, fs, thread, sync::{Arc, Mutex}, time::Instant};
+use std::{error::Error, fs::File};
+use std::fs::create_dir_all;
+use std::io::{copy, Write}; // Добавили Write для write_all
+use std::path::Path;
+use reqwest::Client;
+use scraper::{Html, Selector};
+use url::Url;
 
 pub mod cli;
 pub use crate::cli::Cli;
 
-const LETTER_A: u8 = 'a' as u8;
+// Функция для получения пути к файлу относительно корня
+fn get_relative_path(resource_url: &Url, base_url: &Url) -> String {
+    let base_path = base_url.path();
+    let resource_path = resource_url.path();
+    
+    // Убираем базовый путь сайта, чтобы сохранить структуру относительных путей
+    if resource_path.starts_with(base_path) {
+        return resource_path[base_path.len()..].to_string();
+    }
+    resource_path.to_string()
+}
 
-pub fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
-    let now = Instant::now();
-
-    let contents = fs::read_to_string(&cli.file_path)?;
-
-    let letters: Arc<Mutex<[usize; 26]>> = Arc::new(Mutex::new([0; 26]));
-    let block = contents.len() / cli.threads;
-
-    let mut handles = Vec::new();
-    let contents_arc = Arc::new(contents); // Оборачиваем contents в Arc для безопасного доступа
-
-    for i in 0..cli.threads {
-        let left = i * block;
-        let right = if i == cli.threads - 1 { contents_arc.len() } else { (i + 1) * block };
-
-        let letters = Arc::clone(&letters);
-        let contents = Arc::clone(&contents_arc); // Создаем клон содержимого для каждого потока
-
-        let handle = thread::spawn(move || {
-            let mut letters = letters.lock().unwrap();
-            letter_frequency(&contents[left..right], &mut letters);
-        });
-
-        handles.push(handle);
+async fn download_file(url: &str, save_path: &str) -> Result<(), Box<dyn Error>> {
+    // Создаем директории, если они не существуют
+    let save_path_path = Path::new(save_path);
+    if let Some(parent) = save_path_path.parent() {
+        create_dir_all(parent)?; // Создаем все необходимые директории
     }
 
-    for handle in handles {
-        handle.join().unwrap();
+    let response = reqwest::get(url).await?;
+    let mut file = File::create(save_path)?;
+    let content = response.bytes().await?;
+    copy(&mut content.as_ref(), &mut file)?;
+
+    println!("Скачан файл: {}", save_path);
+    Ok(())
+}
+
+// Функция для скачивания ресурсов (например, изображений, CSS, JS и т.д.)
+async fn download_resources(
+    document: &Html,
+    selector: &Selector,
+    attribute: &str,
+    base_url: &Url,
+    root_folder: &str,
+) -> Result<(), Box<dyn Error>> {
+    for element in document.select(selector) {
+        if let Some(resource_url) = element.value().attr(attribute) {
+            // Преобразуем относительный путь ресурса в абсолютный
+            let resource_url = base_url.join(resource_url)?;
+
+            // Получаем относительный путь ресурса
+            let relative_path = get_relative_path(&resource_url, base_url);
+
+            // Формируем полный путь для сохранения ресурса
+            let save_path = format!("{}/{}", root_folder, relative_path);
+
+            // Скачиваем и сохраняем файл
+            download_file(resource_url.as_str(), &save_path).await?;
+        }
     }
-
-    let elapsed = now.elapsed().as_micros();
-
-    println!("{}", letter_frequency_to_json(&letters.lock().unwrap(), elapsed));
 
     Ok(())
 }
 
-fn letter_frequency(contents: &str, letters: &mut [usize; 26]) {
-    contents
-        .to_lowercase()
-        .chars()
-        .filter(|c| c.is_ascii_alphabetic())
-        .for_each(|letter| letters[(letter as u8 - LETTER_A) as usize] += 1);
-}
+// Основная функция для обработки страницы и скачивания всех ресурсов
+#[tokio::main]
+pub async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
+    let url = &cli.url; // Укажите URL для скачивания
+    let root_folder = "downloaded_site"; // Корневая папка для сохранения сайтаx
 
-fn letter_frequency_to_json(&letters: &[usize; 26], elapsed: u128) -> String {
-    format!("{{\n\t\"elapsed\": \"{elapsed} ms\",\n\t\"result\": {{\n{}\t}} \n}}\n",
-        letters.iter()
-            .enumerate()
-            .map(|(letter, frequency)| 
-                format!("\t\t\"{}\": {}{}\n", (letter as u8 + LETTER_A) as char, frequency, 
-                (if (letter as u8 + LETTER_A) as char != 'z' {","} else {""}).to_string()))
-            .collect::<String>())
-}
+    create_dir_all(root_folder)?;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    // Загружаем страницу
+    let response = Client::new().get(url).send().await?;
+    let body = response.text().await?;
 
-    #[test]
-    fn test_letter_frequency() {
-        let contents = "aAaAa1234   bBBB";
-        let mut letters = [0; 26];
-        letter_frequency(contents, &mut letters);
-        assert_eq!(letters, [5, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-    }
+    // Парсим HTML
+    let document = Html::parse_document(&body);
+
+    // Базовый URL для обработки относительных путей
+    let base_url = Url::parse(url)?;
+
+    // Сохраняем основной HTML-файл
+    let html_file_path = format!("{}/index.html", root_folder);
+    let mut file = File::create(&html_file_path)?;
+    file.write_all(body.as_bytes())?;  // Теперь метод write_all доступен
+
+    // Скачиваем ресурсы
+    let img_selector = Selector::parse("img").unwrap(); // Ищем все теги <img>
+    let css_selector = Selector::parse("link[rel='stylesheet']").unwrap(); // Ищем теги CSS
+    let js_selector = Selector::parse("script[src]").unwrap(); // Ищем теги JS
+
+    // Скачиваем все изображения, стили и скрипты
+    download_resources(&document, &img_selector, "src", &base_url, root_folder).await?;
+    download_resources(&document, &css_selector, "href", &base_url, root_folder).await?;
+    download_resources(&document, &js_selector, "src", &base_url, root_folder).await?;
+
+    Ok(())
 }

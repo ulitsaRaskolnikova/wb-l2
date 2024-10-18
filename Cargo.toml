@@ -4,4 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tokio = { version = "1.40.0", features = ["full"] }
+
+# Для выполнения HTTP-запросов
+reqwest = { version = "0.12.8", features = ["json", "blocking", "cookies"] }
+
+# Для парсинга HTML
+scraper = "0.20.0"
+
+# Для работы с URL
+url = "2.5.2"
+
+# Для асинхронной работы с файлами (если нужно)
+async-std = "1.13.0"
+
 clap = { version = "4.5.19", features = ["derive"] }

@@ -1,9 +1,0 @@
-Rust:
-safe, fast, productive.
-dsf
-Pick three.
-2 b
--1 a
-df
-rt
-eret
