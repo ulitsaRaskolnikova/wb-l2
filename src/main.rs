@@ -41,7 +41,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        // must be peekable so we know when we are on the last command
         let mut commands = input.split(" | ").peekable();
         let mut previous_command: Option<Child> = None;
 
@@ -77,12 +76,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 
 
                     let stdout = if commands.peek().is_some() {
-                        // there is another command piped behind this one
-                        // prepare to send output to the next command
                         Stdio::piped()
                     } else {
-                        // there are no more commands piped behind this one
-                        // send output to shell stdout
                         Stdio::inherit()
                     };
 
