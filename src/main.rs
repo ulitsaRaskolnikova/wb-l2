@@ -1,10 +1,29 @@
 use std::{
-    io::{stdout, Write, stdin},
-    process::{Command, Stdio, Child},
-    path::Path,
-    env,
+    env, io::{stdin, stdout, Write, Error}, os::unix::process::CommandExt, path::Path, process::{Child, Command, Stdio, exit}, str::FromStr
 };
 
+use fork::{daemon, Fork};
+
+
+#[derive(PartialEq, Eq)]
+enum ExecutingMode {
+    Default,
+    Exec,
+    Fork
+}
+
+impl FromStr for ExecutingMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "default" => Ok(ExecutingMode::Default),
+            "exec" => Ok(ExecutingMode::Exec),
+            "fork" => Ok(ExecutingMode::Fork),
+            _ => Err(format!("Unknown ExecutingMode: {}", s))
+        }
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
@@ -23,12 +42,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // must be peekable so we know when we are on the last command
         let mut commands = input.split(" | ").peekable();
-        let mut previous_command = None;
+        let mut previous_command: Option<Child> = None;
 
-        while let Some(command) = commands.next()  {
+        while let Some(command) = commands.next() {
 
             let mut parts = command.trim().split_whitespace();
-            let command = parts.next().unwrap();
+            let mode_or_command = parts.next().unwrap();
+            let mode = ExecutingMode::from_str(mode_or_command).unwrap_or(ExecutingMode::Default);
+            let command = if mode == ExecutingMode::Default {
+                mode_or_command
+            } else {
+                parts.next().unwrap()
+            };
             let args = parts;
 
             match command {
@@ -45,10 +70,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "\\quit" => return Ok(()),
                 command => {
                     let stdin = previous_command
-                        .map_or(
-                            Stdio::inherit(),
-                            |output: Child| Stdio::from(output.stdout.unwrap())
-                        );
+                        .as_mut()
+                        .and_then(|output| output.stdout.take())
+                        .map_or(Stdio::inherit(), |stdout| Stdio::from(stdout));
+                
 
                     let stdout = if commands.peek().is_some() {
                         // there is another command piped behind this one
@@ -60,27 +85,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Stdio::inherit()
                     };
 
-                    let output = Command::new(command)
-                        .args(args)
-                        .stdin(stdin)
-                        .stdout(stdout)
-                        .spawn();
-
-                    match output {
-                        Ok(output) => { previous_command = Some(output); },
-                        Err(e) => {
-                            previous_command = None;
-                            eprintln!("{}", e);
+                    match mode {
+                        ExecutingMode::Default => {
+                            let output = Command::new(command)
+                                .args(args)
+                                .stdin(stdin)
+                                .stdout(stdout)
+                                .spawn();
+                            match output {
+                                Ok(output) => { previous_command = Some(output); },
+                                Err(e) => {
+                                    previous_command = None;
+                                    eprintln!("{}", e);
+                                },
+                            };
                         },
+                        ExecutingMode::Exec => {
+                            let output = Command::new(command)
+                                .args(args)
+                                .stdin(stdin)
+                                .stdout(stdout)
+                                .exec();
+                            eprintln!("{}", output);
+                        },
+                        ExecutingMode::Fork => {
+                            match daemon(false, false) {
+                                Ok(Fork::Parent(_)) => {
+                                    exit(0);
+                                }
+                                Ok(Fork::Child) => {
+                                    let output = Command::new(command)
+                                        .args(args)
+                                        .stdin(stdin)
+                                        .stdout(stdout)
+                                        .output();
+                                    match output {
+                                        Ok(output) => {
+                                            println!("{:?}", output);
+                                        },
+                                        Err(e) => {
+                                            eprintln!("{}", e);
+                                        }
+                                    }
+                                },
+                                Err(_e) => {
+                                    eprint!("{}", Error::new(std::io::ErrorKind::Other, "Failed to fork"));
+                                },
+                            };
+                        }
                     };
                 }
             }
         }
 
         if let Some(mut final_command) = previous_command {
-            // block until the final command has finished
             final_command.wait()?;
         }
-
     }
 }
