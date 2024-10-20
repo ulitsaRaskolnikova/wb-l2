@@ -1,101 +1,81 @@
-use std::{error::Error, fs::File};
-use std::fs::create_dir_all;
-use std::io::{copy, Write}; // Добавили Write для write_all
-use std::path::Path;
-use reqwest::Client;
-use scraper::{Html, Selector};
-use url::Url;
+use std::{
+    error::Error,
+    io::{self, Read, Write},
+    net::{Shutdown, TcpStream, ToSocketAddrs},
+    str::from_utf8,
+    time::Duration,
+};
 
-pub mod cli;
-pub use crate::cli::Cli;
+pub use cli::Cli;
+mod cli;
 
-// Функция для получения пути к файлу относительно корня
-fn get_relative_path(resource_url: &Url, base_url: &Url) -> String {
-    let base_path = base_url.path();
-    let resource_path = resource_url.path();
-    
-    // Убираем базовый путь сайта, чтобы сохранить структуру относительных путей
-    if resource_path.starts_with(base_path) {
-        return resource_path[base_path.len()..].to_string();
-    }
-    resource_path.to_string()
-}
+const MESSAGE_SIZE: usize = 1024;
 
-async fn download_file(url: &str, save_path: &str) -> Result<(), Box<dyn Error>> {
-    // Создаем директории, если они не существуют
-    let save_path_path = Path::new(save_path);
-    if let Some(parent) = save_path_path.parent() {
-        create_dir_all(parent)?; // Создаем все необходимые директории
-    }
+pub fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
+    let addr = &format!("{}:{}", cli.host, cli.port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or("Invalid address")?;
+    let timeout = Duration::from_secs(cli.timeout);
 
-    let response = reqwest::get(url).await?;
-    let mut file = File::create(save_path)?;
-    let content = response.bytes().await?;
-    copy(&mut content.as_ref(), &mut file)?;
+    // Пытаемся подключиться к серверу с таймаутом
+    let mut stream = match TcpStream::connect_timeout(&addr, timeout) {
+        Ok(stream) => stream,
+        Err(e) => {
+            println!("Failed to connect to server: {}", e);
+            return Err(Box::new(e));
+        }
+    };
 
-    println!("Скачан файл: {}", save_path);
-    Ok(())
-}
+    println!("Successfully connected to server on port {}", cli.port);
 
-// Функция для скачивания ресурсов (например, изображений, CSS, JS и т.д.)
-async fn download_resources(
-    document: &Html,
-    selector: &Selector,
-    attribute: &str,
-    base_url: &Url,
-    root_folder: &str,
-) -> Result<(), Box<dyn Error>> {
-    for element in document.select(selector) {
-        if let Some(resource_url) = element.value().attr(attribute) {
-            // Преобразуем относительный путь ресурса в абсолютный
-            let resource_url = base_url.join(resource_url)?;
+    // Устанавливаем таймауты на чтение и запись
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
 
-            // Получаем относительный путь ресурса
-            let relative_path = get_relative_path(&resource_url, base_url);
+    let mut data = [0 as u8; MESSAGE_SIZE];
 
-            // Формируем полный путь для сохранения ресурса
-            let save_path = format!("{}/{}", root_folder, relative_path);
+    loop {
+        // Чтение данных из stdin
+        data.fill(0);
+        let read_bytes = match io::stdin().read(&mut data) {
+            Ok(0) => {
+                // Если прочли 0 байт, это Ctrl+D, завершаем соединение
+                println!("Closing connection (Ctrl+D)");
+                stream.shutdown(Shutdown::Both)?;
+                break;
+            }
+            Ok(n) => n,
+            Err(e) => {
+                println!("Error reading from stdin: {}", e);
+                return Err(Box::new(e));
+            }
+        };
 
-            // Скачиваем и сохраняем файл
-            download_file(resource_url.as_str(), &save_path).await?;
+        // Отправляем данные на сервер
+        if let Err(e) = stream.write_all(&data[..read_bytes]) {
+            println!("Failed to send data to server: {}", e);
+            return Err(Box::new(e));
+        }
+
+        // Чтение ответа от сервера
+        data.fill(0);
+        match stream.read(&mut data) {
+            Ok(0) => {
+                // Если сервер закрыл соединение
+                println!("Connection closed by server.");
+                break;
+            }
+            Ok(n) => {
+                let text = from_utf8(&data[..n]).unwrap_or("[Invalid UTF-8]");
+                print!("{text}");
+            }
+            Err(e) => {
+                println!("Failed to read from server: {}", e);
+                return Err(Box::new(e));
+            }
         }
     }
-
-    Ok(())
-}
-
-// Основная функция для обработки страницы и скачивания всех ресурсов
-#[tokio::main]
-pub async fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
-    let url = &cli.url; // Укажите URL для скачивания
-    let root_folder = "downloaded_site"; // Корневая папка для сохранения сайтаx
-
-    create_dir_all(root_folder)?;
-
-    // Загружаем страницу
-    let response = Client::new().get(url).send().await?;
-    let body = response.text().await?;
-
-    // Парсим HTML
-    let document = Html::parse_document(&body);
-
-    // Базовый URL для обработки относительных путей
-    let base_url = Url::parse(url)?;
-
-    // Сохраняем основной HTML-файл
-    let html_file_path = format!("{}/index.html", root_folder);
-    let mut file = File::create(&html_file_path)?;
-    file.write_all(body.as_bytes())?;  // Теперь метод write_all доступен
-
-    // Скачиваем ресурсы
-    let img_selector = Selector::parse("img").unwrap(); // Ищем все теги <img>
-    let css_selector = Selector::parse("link[rel='stylesheet']").unwrap(); // Ищем теги CSS
-    let js_selector = Selector::parse("script[src]").unwrap(); // Ищем теги JS
-
-    // Скачиваем все изображения, стили и скрипты
-    download_resources(&document, &img_selector, "src", &base_url, root_folder).await?;
-    download_resources(&document, &css_selector, "href", &base_url, root_folder).await?;
-    download_resources(&document, &js_selector, "src", &base_url, root_folder).await?;
 
     Ok(())
 }
